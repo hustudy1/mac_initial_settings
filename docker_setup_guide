@@ -1,0 +1,165 @@
+================================================================
+        Docker 기반 로컬 AI 비서 - 구성 가이드
+================================================================
+
+[ 1. 왜 Docker인가? ]
+
+  ✅ 환경 격리     → Mac 환경을 더럽히지 않음
+  ✅ 이식성        → 다른 PC에서도 동일하게 실행 가능
+  ✅ 관리 편의     → docker-compose up 한 줄로 전체 실행
+  ✅ 확장성        → 기능 추가 시 컨테이너만 추가
+  ✅ 배포 용이     → 모바일 서버로 전환 가능
+
+  ⚠️ 단점
+  - Mac GPU(Apple Silicon) 가속 제한적 → CPU 모드로 동작
+  - Docker 자체 메모리 사용 (약 1~2GB 추가)
+  - 네이티브 대비 약간 느릴 수 있음
+
+================================================================
+
+[ 2. 전체 구성도 ]
+
+  ┌─ Docker Compose ───────────────────────────────────────┐
+  │                                                        │
+  │  ┌──────────────────┐                                  │
+  │  │ 컨테이너 1        │                                  │
+  │  │ ollama-server     │  ← AI 모델 실행 (Llama 3 등)     │
+  │  │ 포트: 11434      │                                  │
+  │  └────────▲─────────┘                                  │
+  │           │ API 통신                                    │
+  │  ┌────────▼─────────┐                                  │
+  │  │ 컨테이너 2        │                                  │
+  │  │ ai-assistant      │  ← Python CLI 앱 (비서 기능)     │
+  │  │ 포트: 없음 (CLI)  │                                  │
+  │  └────────▲─────────┘                                  │
+  │           │                                            │
+  │  ┌────────▼─────────┐                                  │
+  │  │ 컨테이너 3        │                                  │
+  │  │ database          │  ← SQLite/PostgreSQL            │
+  │  │ (일정, 메모 저장)  │     데이터 영구 저장              │
+  │  └──────────────────┘                                  │
+  │                                                        │
+  │  ┌──────────────────┐                                  │
+  │  │ Volume (데이터)   │  ← 컨테이너 삭제해도 데이터 유지   │
+  │  │ - 모델 파일       │                                  │
+  │  │ - 메모/일정 DB    │                                  │
+  │  │ - 설정 파일       │                                  │
+  │  └──────────────────┘                                  │
+  └────────────────────────────────────────────────────────┘
+
+================================================================
+
+[ 3. 필요한 파일 구조 ]
+
+  local_ai/
+  ├── docker-compose.yml        ← 전체 컨테이너 구성 정의
+  ├── Dockerfile                ← Python CLI 앱 빌드 설정
+  ├── requirements.txt          ← Python 패키지 목록
+  ├── app/
+  │   ├── main.py               ← CLI 메인 진입점
+  │   ├── assistant.py          ← AI 비서 핵심 로직
+  │   ├── modules/
+  │   │   ├── chat.py           ← 질문 답변 모듈
+  │   │   ├── file_manager.py   ← 파일 검색/관리
+  │   │   ├── schedule.py       ← 일정 관리
+  │   │   ├── memo.py           ← 메모/노트 관리
+  │   │   └── online/
+  │   │       ├── web_search.py ← 웹 검색
+  │   │       ├── weather.py    ← 날씨 정보
+  │   │       ├── stock.py      ← 주식 정보
+  │   │       └── news.py       ← 뉴스 정보
+  │   └── config/
+  │       └── settings.py       ← 설정 파일
+  └── data/
+      ├── memos/                ← 메모 저장 폴더
+      ├── schedules/            ← 일정 저장 폴더
+      └── db/                   ← 데이터베이스 파일
+
+================================================================
+
+[ 4. Docker 핵심 파일 예시 ]
+
+  --- docker-compose.yml ---
+
+  version: '3.8'
+  services:
+    ollama:
+      image: ollama/ollama
+      container_name: ollama-server
+      ports:
+        - "11434:11434"
+      volumes:
+        - ollama_data:/root/.ollama
+
+    ai-assistant:
+      build: .
+      container_name: ai-assistant
+      depends_on:
+        - ollama
+      volumes:
+        - ./data:/app/data
+      environment:
+        - OLLAMA_HOST=http://ollama:11434
+      stdin_open: true
+      tty: true
+
+  volumes:
+    ollama_data:
+
+  --- Dockerfile ---
+
+  FROM python:3.11-slim
+  WORKDIR /app
+  COPY requirements.txt .
+  RUN pip install -r requirements.txt
+  COPY app/ ./app/
+  CMD ["python", "app/main.py"]
+
+================================================================
+
+[ 5. 실행 방법 ]
+
+  1단계: Docker 설치 확인
+    $ docker --version
+    $ docker-compose --version
+
+  2단계: 전체 컨테이너 실행
+    $ docker-compose up -d
+
+  3단계: AI 모델 다운로드 (최초 1회)
+    $ docker exec -it ollama-server ollama pull llama3
+
+  4단계: AI 비서 실행
+    $ docker exec -it ai-assistant python app/main.py
+
+  종료:
+    $ docker-compose down
+
+  데이터 포함 완전 삭제:
+    $ docker-compose down -v
+
+================================================================
+
+[ 6. 컨테이너별 역할 ]
+
+  컨테이너         | 역할              | 이미지
+  ---------------- | ----------------- | ------------------
+  ollama-server    | AI 모델 실행       | ollama/ollama
+  ai-assistant     | Python CLI 앱     | 자체 빌드
+  database (선택)  | 데이터 저장        | postgres 또는 SQLite
+
+================================================================
+
+[ 7. 다음 단계 ]
+
+  □ Docker Desktop 설치 확인
+  □ 프로젝트 파일 구조 생성
+  □ docker-compose.yml 작성
+  □ Dockerfile 작성
+  □ Python CLI 앱 기본 틀 개발
+  □ Ollama 연동 테스트
+  □ 각 모듈 개발 (질문답변, 파일관리, 일정, 메모)
+  □ 온라인 모듈 개발 (웹검색, 날씨, 주식, 뉴스)
+  □ 테스트 및 최적화
+
+================================================================
